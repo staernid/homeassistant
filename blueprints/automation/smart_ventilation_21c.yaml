@@ -1,5 +1,5 @@
 blueprint:
-  name: "Smart Ventilation for 21°C Comfort (No Window Sensors)"
+  name: "Smart Ventilation for 21°C Comfort (No Window Sensors) - Fixed"
   description: >
     Alerts you when conditions are right to open or close windows to hit a 21°C comfort target.
     Uses throttling to prevent phone spam without needing physical window sensors.
@@ -60,7 +60,8 @@ blueprint:
         time:
 
     notify_device:
-      name: Notification Device
+      name: Notification Action
+      description: "Select the notification service (e.g., Mobile App notification)."
       selector:
         action:
 
@@ -98,7 +99,6 @@ variables:
     {% set outside_is_swampy = ah_out > ah_in %}
     {{ too_cold or outside_is_hotter or outside_is_swampy }}
 
-# Run whenever temperatures or humidity values change significantly
 trigger:
   - platform: state
     entity_id: !input temp_inside
@@ -123,13 +123,12 @@ action:
           - condition: template
             value_template: "{{ should_open }}"
         sequence:
-          - alias: "Send Open Notification"
-            choose: []
+          # This structure properly accepts the 'action' selector block
+          - choose: []
             default: !input notify_device
             data:
               title: "🌬️ Ventilation Recommended: {{ room }}"
               message: "It is currently optimal to open your windows. Inside: {{ t_in }}°C, Outside: {{ t_out }}°C."
-          # Throttle: Stop the automation here until conditions shift or wait 2 hours before nagging
           - delay: "02:00:00"
 
       # Condition B: Weather turned bad or house got cold enough
@@ -137,8 +136,7 @@ action:
           - condition: template
             value_template: "{{ should_close }}"
         sequence:
-          - alias: "Send Close Notification"
-            choose: []
+          - choose: []
             default: !input notify_device
             data:
               title: "🚪 Close Windows: {{ room }}"
