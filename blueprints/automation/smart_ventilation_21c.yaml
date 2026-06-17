@@ -1,14 +1,13 @@
 blueprint:
-  name: "Smart Ventilation for 21°C Comfort (Zero-Helpers)"
+  name: "Smart Ventilation for 21°C Comfort (No Window Sensors)"
   description: >
-    Calculates absolute humidity and temperature deltas completely inline.
-    Recommends opening or closing windows to target an indoor comfort feeling of 21°C.
-    No extra template sensors or helper entities required.
+    Alerts you when conditions are right to open or close windows to hit a 21°C comfort target.
+    Uses throttling to prevent phone spam without needing physical window sensors.
   domain: automation
   input:
     room_name:
       name: Room Name
-      description: "Name of the room used in notification text (e.g., Living Room)"
+      description: "Name of the room (e.g., Living Room)"
       selector:
         text:
 
@@ -25,12 +24,6 @@ blueprint:
         entity:
           domain: sensor
           device_class: humidity
-    window_sensor:
-      name: Window / Door Sensor
-      selector:
-        entity:
-          domain: binary_sensor
-          device_class: [opening, door, window]
 
     temp_outside:
       name: Outdoor Temperature Sensor
@@ -45,10 +38,8 @@ blueprint:
           domain: sensor
           device_class: humidity
 
-    # Configuration Parameters (Replaces Helper Entities)
     ah_threshold:
       name: Absolute Humidity Delta Threshold
-      description: "Minimum grams of water per m³ difference to justify opening windows (Default: 2.0g/m³)"
       default: 2.0
       selector:
         number:
@@ -57,7 +48,6 @@ blueprint:
           step: 0.5
           unit_of_measurement: "g/m³"
 
-    # Quiet Hours Configuration
     quiet_hours_start:
       name: Quiet Hours Start
       default: "22:00:00"
@@ -69,33 +59,24 @@ blueprint:
       selector:
         time:
 
-    # Notification Routing
     notify_device:
       name: Notification Device
-      description: "The mobile app service to notify (e.g., notify.mobile_app_your_phone)"
       selector:
         action:
 
-mode: transient
+mode: restart
 
-# Inline calculations computed at trigger time
 variables:
   room: !input room_name
-  window: !input window_sensor
-
-  # Fetch raw sensor values safely
   t_in: "{{ states(temp_inside) | float(0) }}"
   h_in: "{{ states(humidity_inside) | float(0) }}"
   t_out: "{{ states(temp_outside) | float(0) }}"
   h_out: "{{ states(humidity_outside) | float(0) }}"
-
-  # Threshold variables parsed from inputs
   ah_limit: !input ah_threshold
   q_start: !input quiet_hours_start
   q_end: !input quiet_hours_end
 
-  # --- INLINE PHYSICS MATH FOR ABSOLUTE HUMIDITY (g/m³) ---
-  # Formula: AH = (6.112 * e^((17.67 * T)/(T + 243.5)) * rh * 2.1674) / (273.15 + T)
+  # Inline Physics Math (Absolute Humidity g/m³)
   ah_in: >
     {% set e_in = 6.112 * e ** ((17.67 * t_in) / (t_in + 243.5)) %}
     {{ ((e_in * h_in * 2.1674) / (273.15 + t_in)) | round(2) }}
@@ -103,9 +84,7 @@ variables:
     {% set e_out = 6.112 * e ** ((17.67 * t_out) / (t_out + 243.5)) %}
     {{ ((e_out * h_out * 2.1674) / (273.15 + t_out)) | round(2) }}
 
-  # --- COMFORT LOGIC EVALUATION ---
-  # Target indoor temperature feeling is 21°C.
-  # We should open windows if it's too warm inside AND the outside air will help lower both temperature and moisture load.
+  # Comfort Decisions
   should_open: >
     {% set temp_needs_cooling = t_in > 21.5 %}
     {% set outside_is_cooler = t_out < t_in %}
@@ -119,15 +98,15 @@ variables:
     {% set outside_is_swampy = ah_out > ah_in %}
     {{ too_cold or outside_is_hotter or outside_is_swampy }}
 
-# Evaluate every 10 minutes, or when window states change
+# Run whenever temperatures or humidity values change significantly
 trigger:
-  - platform: time_pattern
-    minutes: "/10"
   - platform: state
-    entity_id: !input window_sensor
+    entity_id: !input temp_inside
+  - platform: state
+    entity_id: !input temp_outside
 
 condition:
-  # Block alerts during user-configured quiet hours
+  # Quiet Hours Check
   - condition: template
     value_template: >
       {% set now_time = now().strftime('%H:%M:%S') %}
@@ -139,26 +118,29 @@ condition:
 
 action:
   - choose:
-      # CASE 1: Windows are CLOSED, but conditions are perfect to open them
+      # Condition A: It becomes optimal to cool down the house
       - conditions:
           - condition: template
-            value_template: "{{ is_state(window, 'off') and should_open }}"
+            value_template: "{{ should_open }}"
         sequence:
           - alias: "Send Open Notification"
             choose: []
             default: !input notify_device
             data:
-              title: "🌬️ Open Window: {{ room }}"
-              message: "It's {{ t_in }}°C inside. Outdoor air is cooler ({{ t_out }}°C) and drier. Open the window to drop toward 21°C comfort!"
+              title: "🌬️ Ventilation Recommended: {{ room }}"
+              message: "It is currently optimal to open your windows. Inside: {{ t_in }}°C, Outside: {{ t_out }}°C."
+          # Throttle: Stop the automation here until conditions shift or wait 2 hours before nagging
+          - delay: "02:00:00"
 
-      # CASE 2: Windows are OPEN, but outdoor air is no longer helping
+      # Condition B: Weather turned bad or house got cold enough
       - conditions:
           - condition: template
-            value_template: "{{ is_state(window, 'on') and should_close }}"
+            value_template: "{{ should_close }}"
         sequence:
           - alias: "Send Close Notification"
             choose: []
             default: !input notify_device
             data:
-              title: "🚪 Close Window: {{ room }}"
-              message: "Close the window in the {{ room }}. The outside air is no longer helping optimize for 21°C."
+              title: "🚪 Close Windows: {{ room }}"
+              message: "Outdoor air is no longer helping. Keep windows shut to maintain 21°C comfort."
+          - delay: "02:00:00"
