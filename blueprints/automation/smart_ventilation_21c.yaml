@@ -1,5 +1,5 @@
 blueprint:
-  name: "Smart Ventilation for 21°C Comfort (No Window Sensors) - Fixed"
+  name: "Smart Ventilation for 21°C Comfort (No Sensors, Fixed Notification)"
   description: >
     Alerts you when conditions are right to open or close windows to hit a 21°C comfort target.
     Uses throttling to prevent phone spam without needing physical window sensors.
@@ -60,10 +60,12 @@ blueprint:
         time:
 
     notify_device:
-      name: Notification Action
-      description: "Select the notification service (e.g., Mobile App notification)."
+      name: Notification Device
+      description: "Select the mobile device/group to receive notifications"
       selector:
-        action:
+        device:
+          filter:
+            - integration: mobile_app
 
 mode: restart
 
@@ -76,6 +78,7 @@ variables:
   ah_limit: !input ah_threshold
   q_start: !input quiet_hours_start
   q_end: !input quiet_hours_end
+  notify_dev: !input notify_device
 
   # Inline Physics Math (Absolute Humidity g/m³)
   ah_in: >
@@ -123,12 +126,11 @@ action:
           - condition: template
             value_template: "{{ should_open }}"
         sequence:
-          # This structure properly accepts the 'action' selector block
-          - choose: []
-            default: !input notify_device
-            data:
-              title: "🌬️ Ventilation Recommended: {{ room }}"
-              message: "It is currently optimal to open your windows. Inside: {{ t_in }}°C, Outside: {{ t_out }}°C."
+          - domain: mobile_app
+            type: notify
+            device_id: !input notify_device
+            title: "🌬️ Ventilation Recommended: {{ room }}"
+            message: "It is currently optimal to open your windows. Inside: {{ t_in }}°C, Outside: {{ t_out }}°C."
           - delay: "02:00:00"
 
       # Condition B: Weather turned bad or house got cold enough
@@ -136,9 +138,9 @@ action:
           - condition: template
             value_template: "{{ should_close }}"
         sequence:
-          - choose: []
-            default: !input notify_device
-            data:
-              title: "🚪 Close Windows: {{ room }}"
-              message: "Outdoor air is no longer helping. Keep windows shut to maintain 21°C comfort."
+          - domain: mobile_app
+            type: notify
+            device_id: !input notify_device
+            title: "🚪 Close Windows: {{ room }}"
+            message: "Outdoor air is no longer helping. Keep windows shut to maintain 21°C comfort."
           - delay: "02:00:00"
